@@ -25,11 +25,11 @@ jobs:
           node-version: '22'
           cache: 'pnpm'
 
-      # 选择更新的 Xcode 版本（尝试 16.5 或 latest）
+      # 选择存在的 Xcode 26.3.0（包含 Swift 6.2+）
       - name: Select Xcode version
         uses: maxim-lobanov/setup-xcode@v1
         with:
-          xcode-version: '16.5'   # 可尝试 'latest' 或 '16.6' 等
+          xcode-version: '26.3.0'   # 使用镜像中已安装的最新稳定版
 
       - name: Install xcodegen
         run: brew install xcodegen
