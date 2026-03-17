@@ -13,19 +13,18 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 使用 Node.js 22，并启用 pnpm 缓存
+      # 安装 pnpm（官方 action，自动加入 PATH）
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 8  # 可根据需要调整，或使用 latest
+
+      # 设置 Node.js 22，并启用 pnpm 缓存
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '22'
           cache: 'pnpm'
-
-      # 安装 pnpm，并确保其路径加入 PATH
-      - name: Install pnpm
-        run: |
-          npm install -g pnpm
-          echo "$(npm config get prefix)/bin" >> $GITHUB_PATH
-          pnpm --version   # 验证安装
 
       - name: Install xcodegen
         run: brew install xcodegen
@@ -38,7 +37,7 @@ jobs:
           cd apps/ios
           xcodegen generate
 
-      - name: List schemes
+      - name: List schemes (debug)
         run: |
           cd apps/ios
           xcodebuild -list -project OpenClaw.xcodeproj
