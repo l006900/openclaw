@@ -1,4 +1,4 @@
-name: Build Signed iOS App (OpenClaw)
+name: Build Signed iOS App with Fastlane
 
 on:
   push:
@@ -13,15 +13,18 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # 安装 pnpm
       - name: Install pnpm
         uses: pnpm/action-setup@v4
 
+      # 设置 Node.js 22 并启用缓存
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '22'
           cache: 'pnpm'
 
+      # 选择 Xcode 26.3.0（与之前一致）
       - name: Select Xcode version
         uses: maxim-lobanov/setup-xcode@v1
         with:
@@ -33,77 +36,64 @@ jobs:
       - name: Install linting tools
         run: brew install swiftlint swiftformat
 
-      # 导入证书和描述文件
-      - name: Setup certificate and provisioning profile
+      # 导入证书和描述文件（使用 GitHub Secrets）
+      - name: Import certificate and provisioning profile
         run: |
+          # 创建专用钥匙串
           security create-keychain -p "temp123" build.keychain
           security default-keychain -s build.keychain
           security unlock-keychain -p "temp123" build.keychain
+
+          # 导入证书
           echo -n "${{ secrets.BUILD_CERTIFICATE_BASE64 }}" | base64 --decode > certificate.p12
           security import certificate.p12 -k build.keychain -P "${{ secrets.P12_PASSWORD }}" -T /usr/bin/codesign
+
+          # 允许 codesign 访问
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "temp123" build.keychain
+
+          # 安装描述文件
           mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles/
           echo -n "${{ secrets.PROVISIONING_PROFILE_BASE64 }}" | base64 --decode > ~/Library/MobileDevice/Provisioning\ Profiles/profile.mobileprovision
 
-      # 关键步骤：创建 LocalSigning.xcconfig 以固定 bundle ID
-      - name: Set fixed bundle ID
-        run: |
-          # 进入 apps/ios 目录（如果该文件通常放在那里）
-          cd apps/ios
-          # 创建 LocalSigning.xcconfig，写入你描述文件对应的 bundle ID
-          # 请将下面的 YOUR_BUNDLE_ID 替换为你的实际 bundle ID
-          echo "PRODUCT_BUNDLE_IDENTIFIER = YOUR_BUNDLE_ID" > LocalSigning.xcconfig
-          # 如果项目期望从 LocalSigning.xcconfig.example 复制，可能需要额外处理
-          # 但直接创建应该也能被 xcodegen 读取
-
-      # 准备 iOS 项目（注意：ios-configure-signing.sh 可能会覆盖我们刚设置的文件，所以我们需要在它之后执行？）
+      # 生成 Xcode 项目
       - name: Prepare iOS project
         run: |
           chmod +x ./scripts/ios-configure-signing.sh
           pnpm install
-          # 运行配置脚本，它可能生成 LocalSigning.xcconfig，所以我们先备份或之后再覆盖
           ./scripts/ios-configure-signing.sh
-          # 再次覆盖 bundle ID（确保脚本没有覆盖我们的设置）
           cd apps/ios
-          echo "PRODUCT_BUNDLE_IDENTIFIER = com.lijinrui.app" > LocalSigning.xcconfig
           xcodegen generate
 
-      # 创建 ExportOptions.plist（只指定 method）
-      - name: Create ExportOptions.plist
+      # 安装 Fastlane
+      - name: Install Fastlane
+        run: gem install fastlane -NV
+
+      # 设置固定的 bundle ID（从你的描述文件提取）
+      - name: Set fixed bundle ID
         run: |
-          cat <<EOF > ExportOptions.plist
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-              <key>method</key>
-              <string>development</string>
-          </dict>
-          </plist>
+          FIXED_BUNDLE_ID="com.lijinrui.app"   # ← 你的实际 Bundle ID
+          # 确保 build 目录存在
+          mkdir -p apps/ios/build
+          # 创建或覆盖 BetaRelease.xcconfig
+          cat > apps/ios/build/BetaRelease.xcconfig << EOF
+          PRODUCT_BUNDLE_IDENTIFIER = $FIXED_BUNDLE_ID
+          // 如果还需要指定 Team ID，可以取消下一行的注释并填写你的 Team ID（VL554P5G35）
+          // DEVELOPMENT_TEAM = VL554P5G35
           EOF
+          # 设置环境变量，使 Fastlane 的 prepare_beta_release! 能读取到我们创建的文件
+          echo "XCODE_XCCONFIG_FILE=$PWD/apps/ios/build/BetaRelease.xcconfig" >> $GITHUB_ENV
 
-      - name: Build archive
+      # 运行 Fastlane 构建已签名的 IPA
+      - name: Build signed IPA with Fastlane
+        env:
+          IOS_BETA_BUILD_NUMBER: 1          # 避免调用 App Store Connect API
         run: |
           cd apps/ios
-          xcodebuild archive \
-            -project OpenClaw.xcodeproj \
-            -scheme OpenClaw \
-            -configuration Release \
-            -archivePath $PWD/build/OpenClaw.xcarchive \
-            -destination 'generic/platform=iOS' \
-            -allowProvisioningUpdates
+          fastlane beta_archive
 
-      - name: Export IPA
-        run: |
-          cd apps/ios
-          xcodebuild -exportArchive \
-            -archivePath $PWD/build/OpenClaw.xcarchive \
-            -exportPath $PWD/build/ipa \
-            -exportOptionsPlist $PWD/../ExportOptions.plist \
-            -allowProvisioningUpdates
-
+      # 上传生成的 IPA
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
           name: OpenClaw-signed.ipa
-          path: apps/ios/build/ipa/*.ipa
+          path: apps/ios/build/beta/OpenClaw-*.ipa
